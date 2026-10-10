@@ -1,8 +1,9 @@
 import time
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 URL = "https://api.open-meteo.com/v1/forecast"
 HOURLY_PARAMS = [
@@ -31,14 +32,13 @@ germany_states = {
     "Thuringia": {"city": "Erfurt", "lat": 50.98, "lon": 11.03},
 }
 
-# Configure a requests Session with automatic retries
+# Session with automatic retries
 session = requests.Session()
-retries = Retry(
-    total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504]
-)
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
 all_dfs = []
+failed = []
 
 for state_name, info in germany_states.items():
     params = {
@@ -51,7 +51,6 @@ for state_name, info in germany_states.items():
     print(f"Fetching weather for {state_name} ({info['city']})...")
 
     try:
-        # Increased timeout to 15 seconds, using our retry session
         response = session.get(url=URL, params=params, timeout=15)
         response.raise_for_status()
 
@@ -61,14 +60,20 @@ for state_name, info in germany_states.items():
         all_dfs.append(df)
 
     except requests.exceptions.RequestException as e:
-        print(f"⚠️ Failed to fetch {state_name}: {e}")
+        print(f"Failed to fetch {state_name}: {e}")
+        failed.append(state_name)
 
-    # Brief pause to be nice to the API server and avoid triggering rate limits
+    # Pause between requests to avoid rate limits
     time.sleep(0.5)
+
+print("Failed states:", failed)
 
 if all_dfs:
     master_df = pd.concat(all_dfs, ignore_index=True)
     master_df["time"] = pd.to_datetime(master_df["time"])
+    master_df.to_csv("data/weather_raw.csv", index=False)
+    print(master_df.dtypes)
+    print(master_df.isna().sum())
     print("\nSuccess! Master dataset shape:", master_df.shape)
 else:
-    print("\n❌ All requests failed. Check your internet connection or VPN.")
+    print("\nAll requests failed. Check your internet connection or VPN.")
